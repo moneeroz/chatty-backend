@@ -65,6 +65,7 @@ class RequestSerializer(serializers.ModelSerializer):
 class FriendSerializer(serializers.ModelSerializer):
     friend = serializers.SerializerMethodField()
     preview = serializers.SerializerMethodField()
+    updated = serializers.SerializerMethodField()
 
     class Meta:
         model = Connection
@@ -81,7 +82,17 @@ class FriendSerializer(serializers.ModelSerializer):
             print("Error: User is not part of the connection")
 
     def get_preview(self, obj):
-        return "New connection"
+        default = "New connection"
+        if not hasattr(obj, "latest_text"):
+            return default
+        return obj.latest_text or default
+
+    def get_updated(self, obj):
+        if not hasattr(obj, "latest_created"):
+            date = obj.updated
+        else:
+            date = obj.latest_created or obj.updated
+        return date.isoformat()
 
 
 class MessageSerializer(serializers.ModelSerializer):

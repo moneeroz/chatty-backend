@@ -4,6 +4,7 @@ from asgiref.sync import async_to_sync
 from channels.generic.websocket import WebsocketConsumer
 from django.core.files.base import ContentFile
 from django.db.models import Q, Exists, OuterRef
+from django.db.models.functions import Coalesce
 
 from .models import User, Connection, Message
 from .serializers import (
@@ -57,6 +58,10 @@ class ChatConsumer(WebsocketConsumer):
         elif data_source == "message.send":
             self.receive_message_send(data)
 
+        # User is typying a message
+        elif data_source == "message.type":
+            self.receive_message_type(data)
+
         # Accept friend request
         elif data_source == "request.accept":
             self.receive_request_accept(data)
@@ -79,9 +84,18 @@ class ChatConsumer(WebsocketConsumer):
 
     def receive_friend_list(self, data):
         user = self.scope["user"]
+        # Latest message subquery
+        latest_message = Message.objects.filter(connection=OuterRef("id")).order_by(
+            "-created"
+        )
         # Get all accepted connections for the user
-        connections = Connection.objects.filter(
-            Q(sender=user) | Q(receiver=user), accepted=True
+        connections = (
+            Connection.objects.filter(Q(sender=user) | Q(receiver=user), accepted=True)
+            .annotate(
+                latest_text=latest_message.values("text"),
+                latest_created=latest_message.values("created"),
+            )
+            .order_by(Coalesce("latest_created", "updated").desc())
         )
         # Serialize connections
         serialized = FriendSerializer(connections, context={"user": user}, many=True)
@@ -92,13 +106,18 @@ class ChatConsumer(WebsocketConsumer):
         user = self.scope["user"]
         connectionId = data.get("connectionId")
         page = data.get("page")
+        page_size = 20
+
+        # Attempt to fetch the connection object
         try:
             connection = Connection.objects.get(id=connectionId)
         except Connection.DoesNotExist:
             print("Error: Connection does not exist")
             return
         # Get  messages
-        messages = Message.objects.filter(connection=connection).order_by("-created")
+        messages = Message.objects.filter(connection=connection).order_by("-created")[
+            page * page_size : (page + 1) * page_size
+        ]
         # Serialize messages
         serialized_message = MessageSerializer(
             messages, context={"user": user}, many=True
@@ -112,8 +131,14 @@ class ChatConsumer(WebsocketConsumer):
         # Serialize friend
         serialized_friend = UserSerializer(recipient)
 
+        # Count the total number of messages for this connection
+        messages_count = Message.objects.filter(connection=connection).count()
+
+        next_page = page + 1 if messages_count > (page + 1) * page_size else None
+
         data = {
             "messages": serialized_message.data,
+            "next": next_page,
             "friend": serialized_friend.data,
         }
 
@@ -162,6 +187,15 @@ class ChatConsumer(WebsocketConsumer):
 
         self.send_group(recipient.username, "message.send", data)
 
+    def receive_message_type(self, data):
+        user = self.scope["user"]
+        recipient_usernmae = data.get("username")
+
+        data = {
+            "username": user.username,
+        }
+        self.send_group(recipient_usernmae, "message.type", data)
+
     def receive_request_accept(self, data):
         username = data.get("username")
         # Attempt to fetch the connection object
@@ -177,9 +211,25 @@ class ChatConsumer(WebsocketConsumer):
         connection.save()
         # Serialize connection
         serialized = RequestSerializer(connection)
-        # Send accepted request to the sender and receiver
+        # Send accepted request to the sender
         self.send_group(connection.sender.username, "request.accept", serialized.data)
+        # Send accepted request to the receiver
         self.send_group(connection.receiver.username, "request.accept", serialized.data)
+
+        # Send new friend object to the sender
+        serialized_friend = FriendSerializer(
+            connection, context={"user": connection.sender}
+        )
+        self.send_group(
+            connection.sender.username, "friend.new", serialized_friend.data
+        )
+        # Send new friend object to the receiver
+        serialized_friend = FriendSerializer(
+            connection, context={"user": connection.receiver}
+        )
+        self.send_group(
+            connection.receiver.username, "friend.new", serialized_friend.data
+        )
 
     def receive_request_connect(self, data):
         username = data.get("username")
@@ -245,7 +295,6 @@ class ChatConsumer(WebsocketConsumer):
                 ),
             )
         )
-
         # Serialize results
         serialized = SearchSerializer(users, many=True)
         # Send the results back to the user
