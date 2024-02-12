@@ -25,6 +25,7 @@ class ChatConsumer(WebsocketConsumer):
             self.close()
             return
 
+        # Save the username to use as a group name
         self.username = user.username
         # Join the user to a group with their username
         async_to_sync(self.channel_layer.group_add)(self.username, self.channel_name)
@@ -40,9 +41,10 @@ class ChatConsumer(WebsocketConsumer):
     # Handle requests
 
     def receive(self, text_data):
+        print("Received WebSocket message:", text_data)
         # Recive message from WebSocket
         data = json.loads(text_data)
-        data_source = data["source"]
+        data_source = data.get("source")
 
         print("receive", json.dumps(data, indent=2))
 
@@ -75,11 +77,11 @@ class ChatConsumer(WebsocketConsumer):
             self.receive_request_list(data)
 
         # Search / filter users
-        elif data_source == "search":
+        elif data_source == "user.search":
             self.recive_search(data)
 
         # Thumbnail upload
-        elif data_source == "thumbnail":
+        elif data_source == "user.thumbnail":
             self.receive_thumbnail(data)
 
     def receive_friend_list(self, data):
@@ -87,7 +89,7 @@ class ChatConsumer(WebsocketConsumer):
         # Latest message subquery
         latest_message = Message.objects.filter(connection=OuterRef("id")).order_by(
             "-created"
-        )
+        )[:1]
         # Get all accepted connections for the user
         connections = (
             Connection.objects.filter(Q(sender=user) | Q(receiver=user), accepted=True)
@@ -262,6 +264,7 @@ class ChatConsumer(WebsocketConsumer):
         self.send_group(user.username, "request.list", serialized.data)
 
     def recive_search(self, data):
+
         query = data.get("query")
         # Get users from query search term
         users = (
@@ -298,7 +301,7 @@ class ChatConsumer(WebsocketConsumer):
         # Serialize results
         serialized = SearchSerializer(users, many=True)
         # Send the results back to the user
-        self.send_group(self.username, "search", serialized.data)
+        self.send_group(self.username, "user.search", serialized.data)
 
     def receive_thumbnail(self, data):
         user = self.scope["user"]
@@ -311,7 +314,7 @@ class ChatConsumer(WebsocketConsumer):
         # Serialize user
         serialized = UserSerializer(user)
         # Send serialized user to the group
-        self.send_group(self.username, "thumbnail", serialized.data)
+        self.send_group(self.username, "user.thumbnail", serialized.data)
 
     # Catch/all broadcast to client helpers
     def send_group(self, group, source, data):
@@ -320,5 +323,5 @@ class ChatConsumer(WebsocketConsumer):
         async_to_sync(self.channel_layer.group_send)(group, response)
 
     def broadcast_group(self, data):
-        data.pop("type")
+        # data.pop("type")
         self.send(text_data=json.dumps(data))
