@@ -11,6 +11,7 @@ cryptography==42.0.2
 daphne==4.0.0
 Django==5.0.1
 django-channels-jwt-auth-middleware==1.0.0
+django-cors-headers==4.3.1
 djangorestframework==3.14.0
 djangorestframework-simplejwt==5.3.1
 hyperlink==21.0.0
