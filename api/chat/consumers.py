@@ -191,12 +191,12 @@ class ChatConsumer(WebsocketConsumer):
 
     def receive_message_type(self, data):
         user = self.scope["user"]
-        recipient_usernmae = data.get("username")
+        recipient_username = data.get("username")
 
         data = {
             "username": user.username,
         }
-        self.send_group(recipient_usernmae, "message.type", data)
+        self.send_group(recipient_username, "message.type", data)
 
     def receive_request_accept(self, data):
         username = data.get("username")
